@@ -1,0 +1,51 @@
+#!/usr/bin/env python
+
+from scapy.all import conf, sendp, ARP, Ether, ETHER_BROADCAST, IP
+from scapy.contrib.igmp import IGMP
+
+
+class IGMPMembership(object):
+    """This thread is used to discover clients on the network by sending IGMP general queries."""
+
+    _IGMP_MULTICAST = "224.0.0.1"
+    """str: Multicast address used to send IGMP general queries."""
+    _SLEEP = 60
+    """int: Time to wait before sending packets anew."""
+    _IGMP_GENERAL_QUERY = 0x11
+    """int: Value of type Field for IGMP general queries."""
+    _TTL = 1
+    """int: Value for TTL for IP packet."""
+
+    def __init__(self, gateway, network, ip, mac):
+        """Initialises the thread.
+ 
+        Args:
+            gateway (str): The gateway's IP address.
+            network (str): The network IP address.
+            mac (str): MAC address of this device.
+            ip (str): IP address of this device.
+ 
+        """
+        self.gateway = gateway
+        self.network = network
+        self.mac = mac
+        self.ip = ip
+
+    def run(self):
+        """Sends IGMP general query packets using the multicast address 224.0.0.1.
+        Received replies are processed by a SniffThread.
+        """
+
+        # create IGMP general query packet
+        ether_part = Ether(src=self.mac)
+        ip_part = IP(ttl=self._TTL, src=self.ip, dst=self._IGMP_MULTICAST)
+        igmp_part = IGMP(type=self._IGMP_GENERAL_QUERY)
+
+        # Called to explicitely fixup associated IP and Ethernet headers
+        igmp_part.igmpize(ether=ether_part, ip=ip_part)
+
+        sendp(ether_part / ip_part / igmp_part)
+
+if __name__ == '__main__':
+    igmp = IGMPMembership(None, None, '0.0.0.0', '46:cc:1c:68:23:03')
+    igmp.run()
