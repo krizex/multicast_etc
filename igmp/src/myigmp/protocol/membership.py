@@ -43,8 +43,10 @@ class IGMPMembership(object):
         igmp_part = IGMP(type=self._IGMP_GENERAL_QUERY)
 
         # Called to explicitely fixup associated IP and Ethernet headers
+        igmp_part.mrtime = 1
         igmp_part.igmpize(ether=ether_part, ip=ip_part)
         ether_part.dst = self.dst_mac
+
 
         sendp(ether_part / ip_part / igmp_part)
 
