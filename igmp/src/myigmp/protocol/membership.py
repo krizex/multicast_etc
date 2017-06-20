@@ -44,7 +44,7 @@ class IGMPMembership(object):
 
         # Called to explicitely fixup associated IP and Ethernet headers
         igmp_part.igmpize(ether=ether_part, ip=ip_part)
-        ether_part.dst_mac = self.dst_mac
+        ether_part.dst = self.dst_mac
 
         sendp(ether_part / ip_part / igmp_part)
 
