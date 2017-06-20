@@ -16,7 +16,7 @@ class IGMPMembership(object):
     _TTL = 1
     """int: Value for TTL for IP packet."""
 
-    def __init__(self, gateway, network, ip, src_mac, dst_mac):
+    def __init__(self, gateway, network, ip, src_mac, dst_mac, mrtime):
         """Initialises the thread.
  
         Args:
@@ -31,6 +31,7 @@ class IGMPMembership(object):
         self.src_mac = src_mac
         self.ip = ip
         self.dst_mac = dst_mac
+        self.mrtime = mrtime
 
     def run(self):
         """Sends IGMP general query packets using the multicast address 224.0.0.1.
@@ -43,7 +44,7 @@ class IGMPMembership(object):
         igmp_part = IGMP(type=self._IGMP_GENERAL_QUERY)
 
         # Called to explicitely fixup associated IP and Ethernet headers
-        igmp_part.mrtime = 1
+        igmp_part.mrtime = self.mrtime
         igmp_part.igmpize(ether=ether_part, ip=ip_part)
         ether_part.dst = self.dst_mac
 
@@ -51,5 +52,5 @@ class IGMPMembership(object):
         sendp(ether_part / ip_part / igmp_part)
 
 if __name__ == '__main__':
-    igmp = IGMPMembership(None, None, '0.0.0.0', '00:00:00:00:00:00', '5a:ea:c8:7c:07:aa')
+    igmp = IGMPMembership(None, None, '0.0.0.0', '00:00:00:00:00:00', '5a:ea:c8:7c:07:aa', 1)
     igmp.run()
