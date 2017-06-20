@@ -52,5 +52,8 @@ class IGMPMembership(object):
         sendp(ether_part / ip_part / igmp_part)
 
 if __name__ == '__main__':
+    # send to all VMs
+    # igmp = IGMPMembership(None, None, '0.0.0.0', '00:00:00:00:00:00', '01:00:5e:00:00:01', 1)
+    # send to specify VM
     igmp = IGMPMembership(None, None, '0.0.0.0', '00:00:00:00:00:00', '5a:ea:c8:7c:07:aa', 1)
     igmp.run()
