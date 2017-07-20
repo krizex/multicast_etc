@@ -51,7 +51,7 @@ def create_ip_layer():
 def create_igmp_layer():
     """
     IGMP Type: IGMP Query (0x11)
-    Max Resp Time: 1 second (0x0a)
+    Max Resp Time: 0.1 second (0x01)
     """
 
     return [
