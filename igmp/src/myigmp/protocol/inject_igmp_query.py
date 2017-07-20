@@ -1,38 +1,6 @@
 #!/usr/bin/python
+import argparse
 import socket
-import sys
- 
-# s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x8100)
-#
-#
-# # FIXME should send to all bridges
-# s.bind(('xenbr0', 0x8100))
-#
-#
-# # Dst: IPv4mcast_01 (01:00:5e:00:00:01)
-# # Src: 00:00:00:00:00:00
-# # IP Type: IPv4 (0x0800)
-# # Version: 4
-# # Total length: 32
-# # TTL: 1
-# # Source IP: 0.0.0.0
-# # Destination IP: 224.0.0.1 (e0:00:00:01)
-# # IGMP Type: IGMP Query (0x11)
-# # Max Resp Time: 1 second (0x0a)
-#
-# query_packet = [0x01, 0x00, 0x5e, 0x00, 0x00, 0x01,
-#                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-#                 0x08, 0x00,
-#                 0x46, 0x00, 0x00, 0x20,
-#                 0x00, 0x01, 0x00, 0x00, 0x01, 0x02,
-#                 0x44, 0xd6, 0x00, 0x00, 0x00, 0x00,
-#                 0xe0, 0x00, 0x00, 0x01, 0x94, 0x04,
-#                 0x00, 0x00,
-#                 0x11, 0x0a, 0xee, 0xf5,
-#                 0x00, 0x00, 0x00, 0x00]
-#
-# s.send("".join(map(chr, query_packet)))
-# s.close()
 
 
 def parse_mac_address(mac):
@@ -110,12 +78,14 @@ def create_igmp_query(dst_mac, vlanid):
 
 
 if __name__ == '__main__':
-    args = sys.argv[1:]
-    interface, dst_mac, vlanid = args
-    vlanid = int(vlanid)
-    packet = create_igmp_query(dst_mac, vlanid)
-    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0x8100)
-    s.bind((interface, 0x8100))
+    parser = argparse.ArgumentParser()
+    parser.add_argument('interface', help='Vif interface name')
+    parser.add_argument('dst_mac', help='Destination mac address')
+    parser.add_argument('vlanid', type=int, help='Vlan ID')
+    args = parser.parse_args()
+    packet = create_igmp_query(args.dst_mac, args.vlanid)
+    s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
+    s.bind((args.interface, 0))
     s.send(packet)
     s.close()
 
