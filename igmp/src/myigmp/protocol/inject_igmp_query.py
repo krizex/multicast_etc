@@ -79,14 +79,16 @@ def create_igmp_query(dst_mac, vlanid):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('interface', help='Vif interface name')
-    parser.add_argument('dst_mac', help='Destination mac address')
-    parser.add_argument('vlanid', type=int, help='Vlan ID')
+    parser.add_argument('--interface', dest='interface', required=True, help='Vif interface name')
+    parser.add_argument('--dst_mac', dest='dst_mac', required=True, help='Destination mac address')
+    parser.add_argument('--vlanids', dest='vlanids', nargs='+', type=int, required=True, help='Vlan ID')
     args = parser.parse_args()
-    packet = create_igmp_query(args.dst_mac, args.vlanid)
+
     s = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, 0)
     s.bind((args.interface, 0))
-    s.send(packet)
+    for vlan in args.vlanids:
+        packet = create_igmp_query(args.dst_mac, vlan)
+        s.send(packet)
     s.close()
 
 

@@ -53,7 +53,7 @@ class IGMPMembership(object):
 
 if __name__ == '__main__':
     # send to all VMs
-    igmp = IGMPMembership(None, None, '0.0.0.0', '00:00:00:00:00:00', '01:00:5e:00:00:01', 1)
+    igmp = IGMPMembership(None, None, '192.168.3.1', '00:00:00:00:00:00', '01:00:5e:00:00:01', 1)
     # send to specify VM
     # igmp = IGMPMembership(None, None, '0.0.0.0', '00:00:00:00:00:00', '5a:ea:c8:7c:07:aa', 1)
     igmp.run()
