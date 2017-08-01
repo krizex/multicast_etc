@@ -1,23 +1,16 @@
 #!/usr/bin/env python
-import Queue
 import argparse
 import os
 import socket
 import subprocess
-import threading
 from abc import ABCMeta, abstractmethod
 from collections import namedtuple
-from contextlib import contextmanager
 from select import EPOLLIN, epoll
-
 import logging
-
+import signal
 import xcp.logger as log
-
 import time
-
 import sys
-
 import re
 
 __DEBUG = True
@@ -27,12 +20,59 @@ else:
     logging_lvl = logging.INFO
 
 
-#FIXME: add signal handler to kill subprocess
+class Singleton(type):
+    _instances = {}
+
+    def __call__(cls, *args, **kwargs):
+        if cls not in cls._instances:
+            cls._instances[cls] = super(Singleton, cls).__call__(*args, **kwargs)
+        return cls._instances[cls]
+
+
+class SubprocessAutoClean(object):
+    __metaclass__ = Singleton
+    """Ensure all subprocess are terminated when the main process exits
+    """
+    CATCH_SIGNALS = [signal.SIGTERM, signal.SIGINT]
+
+    def __init__(self):
+        self.subprocess_lst = []
+
+    def add_subprocess(self, p):
+        self.subprocess_lst.append(p)
+
+    def del_subprocess(self, p):
+        self.subprocess_lst.remove(p)
+
+    def kill_all_subprocess(self):
+        if not self.subprocess_lst:
+            return
+
+        log.info('kill all sub process')
+        for p in self.subprocess_lst:
+            p.terminate()
+
+        self.subprocess_lst = []
+
+    def __enter__(self):
+        self._set_signal_handler(self.CATCH_SIGNALS, self._kill_all_subprocess_and_exit)
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.kill_all_subprocess()
+
+    def _set_signal_handler(self, signals, f):
+        for s in signals:
+            signal.signal(s, f)
+
+    def _kill_all_subprocess_and_exit(self, signum, frame):
+        log.critical('Catch signal %d, kill all subprocess' % signum)
+        self.kill_all_subprocess()
+        sys.exit(1)
+
 
 class ERRNO(object):
     SUCC = 0
-    XENSTORE_WATCH_TIMEOUT = 1
-    SNOOPING_IS_OFF = 2
+    SNOOPING_IS_OFF = 1
 
 
 class XenstoreUtil(object):
@@ -40,10 +80,7 @@ class XenstoreUtil(object):
     """
     @staticmethod
     def read(path):
-        try:
-            return subprocess.check_output(['xenstore-read', path]).strip()
-        except:
-            return ''
+        return subprocess.check_output(['xenstore-read', path]).strip()
 
     @staticmethod
     def vif_mac_path(domid, vifid):
@@ -63,9 +100,11 @@ class XenstoreWatcher(object):
 
     def start(self):
         self.p = subprocess.Popen(['xenstore-watch', self._watch_path], stdout=subprocess.PIPE)
+        SubprocessAutoClean().add_subprocess(self.p)
 
     def terminate(self):
         self.p.terminate()
+        SubprocessAutoClean().del_subprocess(self.p)
 
     def readline(self):
         return self.stdout.readline()
@@ -96,63 +135,14 @@ class XenstoreInspector(object):
         val = XenstoreUtil.read(self.watch_path)
         if val == self.expect_val:
             return True
-
-        return False
+        else:
+            return False
 
     def start(self):
         self._watcher.start()
 
     def terminate(self):
         self._watcher.terminate()
-
-
-class XenstoreVifInspectorThread(threading.Thread):
-    def __init__(self, tasks, timeout, queue):
-        super(XenstoreVifInspectorThread, self).__init__()
-        self.tasks = tasks
-        self.timeout = timeout
-        self.queue = queue
-
-    def run(self):
-        TaskInspectorPair = namedtuple('TaskInspectorPair', ['task', 'inspector'])
-        task_inspector_pair_list = map(lambda x: TaskInspectorPair(x, XenstoreInspector(x.vif_state_path, x.expect_state)),
-                                       self.tasks)
-        fdmap = {}
-        poll = epoll()
-        for x in task_inspector_pair_list:
-            x.inspector.start()
-            fd = x.inspector.stdout.fileno()
-            fdmap[fd] = x
-            poll.register(fd, EPOLLIN)
-
-        remain_timeout = self.timeout
-        while remain_timeout > 0:
-            start = time.time()
-            events = poll.poll(remain_timeout)
-            if not events:
-                break
-
-            for fd, _ in events:
-                task, inspector = fdmap[fd]
-                if inspector.read_and_check():
-                    # value change to expected
-                    log.info('Add injection task for %s' % task.vif)
-                    self.queue.put(InjectionTask(task.get_vif_obj()))
-                    inspector.terminate()
-                    poll.unregister(fd)
-                    del fdmap[fd]
-
-            if not fdmap:
-                return
-
-            remain_timeout = remain_timeout - (time.time() - start)
-
-        poll.close()
-        for task, inspector in fdmap.itervalues():
-            log.warning("Value of '%s' not change to '%s' in %d seconds." %
-                        (task.vif_state_path, task.expect_state, self.timeout))
-            self.queue.put(InjectionTask(None))
-            inspector.terminate()
 
 
 class Vif(object):
@@ -190,22 +180,6 @@ class VifInspectorTask(object):
     @property
     def vif_state_path(self):
         return self._vif.state_path
-
-
-class InjectionTask(object):
-    def __init__(self, vif):
-        self._vif = vif
-
-    @property
-    def vif(self):
-        return self._vif.vif_name
-
-    @property
-    def mac(self):
-        return self._vif.mac
-
-    def valid(self):
-        return self._vif is not None
 
 
 class IGMPQueryGenerator(object):
@@ -317,19 +291,45 @@ class IGMPQueryInjectorPerVif(IGMPQueryInjector):
             self._inject_without_connection_state_check()
 
     def _inject_with_connection_state_check(self):
-        injection_task_queue = Queue.Queue()
+        TaskInspectorPair = namedtuple('TaskInspectorPair', ['task', 'inspector'])
         tasks = map(lambda vif: VifInspectorTask(vif, '5'), self.vifs)
-        XenstoreVifInspectorThread(tasks, self.vif_connected_timeout, injection_task_queue).start()
+        task_inspector_pair_list = map(lambda x: TaskInspectorPair(x, XenstoreInspector(x.vif_state_path, x.expect_state)),
+                                       tasks)
+        fdmap = {}
+        poll = epoll()
+        for x in task_inspector_pair_list:
+            x.inspector.start()
+            fd = x.inspector.stdout.fileno()
+            fdmap[fd] = x
+            poll.register(fd, EPOLLIN)
 
-        for i in range(10):
-            log.debug(i)
-            time.sleep(1)
+        remain_timeout = self.vif_connected_timeout
+        while remain_timeout > 0:
+            start = time.time()
+            events = poll.poll(remain_timeout)
+            if not events:
+                break
 
-        for _ in range(len(self.vifs)):
-            injection_task = injection_task_queue.get()
-            if not injection_task.valid():
-                continue
-            self.inject_to_vif(injection_task.vif, injection_task.mac)
+            for fd, _ in events:
+                task, inspector = fdmap[fd]
+                if inspector.read_and_check():
+                    # value change to expected, so inject query
+                    self.inject_to_vif(task.vif, task.mac)
+                    inspector.terminate()
+                    poll.unregister(fd)
+                    del fdmap[fd]
+
+            if not fdmap:
+                return
+
+            remain_timeout = remain_timeout - (time.time() - start)
+
+        poll.close()
+        for task, inspector in fdmap.itervalues():
+            log.warning("Value of '%s' not change to '%s' in %d seconds." %
+                        (task.vif_state_path, task.expect_state, self.vif_connected_timeout))
+            log.warning("Won't inject IGMP query to vif: %s, mac: %s" % (task.vif, task.mac))
+            inspector.terminate()
 
     def _inject_without_connection_state_check(self):
         self.inject_to_vifs(self.vifs)
@@ -359,13 +359,13 @@ class IGMPQueryInjectorPerBridge(IGMPQueryInjector):
 
 
 def inject_per_vif(args):
-    log.info('Inject IGMP query per pif')
+    log.info('Entry point: Inject IGMP query per pif')
     injector = IGMPQueryInjectorPerVif(args.vifs, args.vif_connected_timeout)
     return injector.inject()
 
 
 def inject_per_bridge(args):
-    log.info('Inject IGMP query per bridge')
+    log.info('Entry point: Inject IGMP query per bridge')
     injector = IGMPQueryInjectorPerBridge(args.bridges)
     return injector.inject()
 
@@ -401,13 +401,6 @@ def inject_query_packet(interface, packet):
     s.close()
 
 
-def print_pid():
-    pid = os.getpid()
-    pgid = os.getpgid(pid)
-    ppid = os.getppid()
-    print 'pid: %d, pgid: %d, ppid: %d' % (pid, pgid, ppid)
-
-
 def _detach():
     try:
         pid = os.fork()
@@ -419,21 +412,29 @@ def _detach():
 
 
 def toggle_of_IGMP_snooping_is_enabled():
-    pass
+    pool_uuid = subprocess.check_output(['xe', 'pool-list', '--minimal']).strip()
+    toggle_state = subprocess.check_output(
+        ['xe', 'pool-param-get', 'uuid=%s' % pool_uuid, 'param-name=igmp_snooping_enabled']).strip()
+    if toggle_state == 'true':
+        return True
+    else:
+        return False
 
 
 def main():
-    log.logToSyslog(level=logging_lvl)
-    parser = build_parser()
-    args = parser.parse_args()
+    # Ensure kill subprocess when exception catches
+    with SubprocessAutoClean():
+        log.logToSyslog(level=logging_lvl)
+        parser = build_parser()
+        args = parser.parse_args()
 
-    if args.detach:
-        _detach()
+        if args.detach:
+            _detach()
 
-    if args.check_snooping_toggle and (not toggle_of_IGMP_snooping_is_enabled()):
-        return ERRNO.SNOOPING_IS_OFF
+        if args.check_snooping_toggle and (not toggle_of_IGMP_snooping_is_enabled()):
+            return ERRNO.SNOOPING_IS_OFF
 
-    args.func(args)
+        args.func(args)
 
 
 if __name__ == '__main__':
