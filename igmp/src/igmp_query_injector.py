@@ -320,7 +320,7 @@ class IGMPQueryInjectorPerVif(IGMPQueryInjector):
                     del fdmap[fd]
 
             if not fdmap:
-                return
+                break
 
             remain_timeout = remain_timeout - (time.time() - start)
 
