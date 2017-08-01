@@ -292,7 +292,7 @@ class IGMPQueryInjectorPerVif(IGMPQueryInjector):
 
     def _inject_with_connection_state_check(self):
         TaskInspectorPair = namedtuple('TaskInspectorPair', ['task', 'inspector'])
-        tasks = map(lambda vif: VifInspectorTask(vif, '5'), self.vifs)
+        tasks = map(lambda vif: VifInspectorTask(vif, '4'), self.vifs)
         task_inspector_pair_list = map(lambda x: TaskInspectorPair(x, XenstoreInspector(x.vif_state_path, x.expect_state)),
                                        tasks)
         fdmap = {}
